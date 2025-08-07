@@ -1,0 +1,14 @@
+[project]
+name = "face-swapper"
+version = "0.1.0"
+description = "Swap face"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.116.1",
+    "pillow>=11.3.0",
+    "python-multipart>=0.0.20",
+    "requests>=2.32.4",
+    "uvicorn[standard]>=0.35.0",
+    "python-dotenv>=1.0.1",
+]
