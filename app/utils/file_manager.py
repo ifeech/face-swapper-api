@@ -52,14 +52,14 @@ def get_file_info(file_path: Path) -> dict:
         "extension": file_path.suffix
     }
 
-
-async def save_upload_stream(upload: UploadFile, filename: str, max_mb: int = 10) -> Path:
+async def save_upload_stream(upload: UploadFile, filename: str, user_uid: str, max_mb: int = 10) -> Path:
     """
     Потоково сохраняет загруженный файл, ограничивая максимальный размер.
 
     Args:
         upload: UploadFile из FastAPI
         filename: имя файла для сохранения
+        user_uid: id пользователя для создания уникальной подпапки
         max_mb: лимит размера в мегабайтах
 
     Returns:
@@ -70,7 +70,7 @@ async def save_upload_stream(upload: UploadFile, filename: str, max_mb: int = 10
     """
     now = datetime.now()
     month_year = now.strftime("%m_%Y")
-    input_dir = Path("data/input") / month_year
+    input_dir = Path("data/input") / user_uid / month_year
     input_dir.mkdir(parents=True, exist_ok=True)
 
     dst_path = input_dir / filename

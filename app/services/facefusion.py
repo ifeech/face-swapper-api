@@ -6,34 +6,39 @@ import os
 import subprocess
 import logging
 
+from datetime import datetime
 from pathlib import Path
 from typing import Dict
 from dotenv import load_dotenv
 
 
-class FusionService:
+class FacefusionService:
     """Сервис для обработки и слияния лиц на базе FaceFusion 3"""
 
     def __init__(self) -> None:
         self.logger = logging.getLogger("face_swapper.fusion")
-        self.assets_dir = Path("data/assets")
-        self.assets_dir.mkdir(exist_ok=True, parents=True)
         self.output_dir = Path("data/output")
         self.output_dir.mkdir(exist_ok=True, parents=True)
         self.models_dir = Path("data/models") # для facefusion кэш/модели
         self.models_dir.mkdir(exist_ok=True, parents=True)
 
-    def swap_faces(self, source_image_path: str, template_name: str, user_uid: str) -> Dict[str, str]:
+    def swap_faces(
+        self, 
+        source_image_path: str, 
+        template_image_path: str,
+        output_name: str,
+        user_uid: str,
+    ) -> Dict[str, str]:
         """
-        Запускает замену лица: перенос лица с source на шаблон из assets.
+        Запускает замену лица: перенос лица с source на template.
 
         Returns:
-            dict с путями к файлам и относительным URL результата
+            dict с путями к файлам
         """
 
-        source = self._build_source_path(source_image_path)
-        template = self._resolve_template_path(template_name)
-        output = self._build_output_path(template_name, user_uid)
+        source = self._build_path(source_image_path)
+        template = self._build_path(template_image_path)
+        output = self._build_output_path(output_name, user_uid)
 
         self._run_facefusion(source=source, template=template, output=output)
         
@@ -44,23 +49,7 @@ class FusionService:
             "user_uid": user_uid,
         }
 
-    def _resolve_template_path(self, template_name: str) -> Path:
-        """Возвращает путь к шаблону по имени (без директорий вне assets)."""
-        template_path = (self.assets_dir / template_name).resolve()
-        assets_root = self.assets_dir.resolve()
-        # Надёжная защита от выхода за каталог assets
-        try:
-            template_path.relative_to(assets_root)
-        except ValueError:
-            self.logger.warning("Attempt to escape assets directory: %s", template_path)
-            raise FileNotFoundError("Недопустимый путь шаблона")
-        if not template_path.exists():
-            self.logger.warning("Template not found: %s", template_path)
-            raise FileNotFoundError(f"Шаблон не найден: {template_path}")
-
-        return template_path
-
-    def _build_source_path(self, source_image_path: str) -> Path:
+    def _build_path(self, source_image_path: str) -> Path:
         source = Path(source_image_path)
         if not source.exists():
             self.logger.warning("Source not found: %s", source)
@@ -68,15 +57,13 @@ class FusionService:
         
         return source.resolve()
 
-    def _build_output_path(self, template_name: str, user_uid: str) -> Path:
-        source_ext = Path(template_name).suffix or ".png"
-        safe_template = Path(template_name).stem
-        unique_name = f"{safe_template}_{os.urandom(4).hex()}{source_ext}"
-
-        user_dir = self.output_dir / user_uid
+    def _build_output_path(self, output_name: str, user_uid: str) -> Path:
+        now = datetime.now()
+        month_year = now.strftime("%m_%Y")
+        user_dir = self.output_dir / user_uid / month_year
         user_dir.mkdir(parents=True, exist_ok=True)
         
-        return (user_dir / unique_name).resolve()
+        return (user_dir / output_name).resolve()
 
     def _run_facefusion(self, source: Path, template: Path, output: Path) -> None:
         """Запуск facefusion 3 через CLI.

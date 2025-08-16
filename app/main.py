@@ -1,12 +1,14 @@
+import os
 import uuid
-
 import logging
+
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from app.services.fusion import FusionService
-from app.utils.file_manager import save_upload_stream
 from pathlib import Path
+from dotenv import load_dotenv
+
+from app.services.facefusion import FacefusionService
+from app.utils.file_manager import save_upload_stream
 
 
 logging.basicConfig(
@@ -15,48 +17,76 @@ logging.basicConfig(
 )
 logger = logging.getLogger("face_swapper")
 
+# Загружаем переменные окружения из .env (если файл есть в корне проекта)
+load_dotenv()
+
+
 app = FastAPI()
 
-@app.post("/swap")
+
+@app.post("/facefusion")
 async def swap(
-    file: UploadFile = File(...),
-    template_name: str = Form(...),
+    source: UploadFile = File(...),
+    template: UploadFile = File(...),
     user_uid: str = Form(...),
     content_length: int | None = Header(default=None, alias="Content-Length"),
 ):
     # Проверка типа контента
-    if file.content_type not in {"image/jpeg", "image/png"}:
+    if source.content_type not in {"image/jpeg", "image/png"}:
         logger.warning(
             "Unsupported content type: %s for filename=%s user_uid=%s",
-            file.content_type,
-            file.filename,
+            source.content_type,
+            source.filename,
             user_uid,
         )
         raise HTTPException(415, "Unsupported format")
 
-    MAX_FILE_SIZE_MB = 10
+    if template.content_type not in {"image/jpeg", "image/png", "video/mp4"}:
+        logger.warning(
+            "Unsupported content type: %s for template=%s user_uid=%s",
+            template.content_type,
+            template.filename,
+            user_uid,
+        )
+        raise HTTPException(415, "Unsupported format")
 
+    max_source_size_mb = int(os.getenv("MAX_SOURCE_FILE_SIZE_MB"))
+    max_template_size_mb = int(os.getenv("MAX_TEMPLATE_SIZE_MB"))
+
+    max_content_length_mb = max_source_size_mb+max_template_size_mb
     # Проверка размера до чтения (если сервер/клиент передал Content-Length)
-    if content_length is not None and content_length > MAX_FILE_SIZE_MB * 1024 * 1024:
-        raise HTTPException(413, f"Файл слишком большой. Лимит: {MAX_FILE_SIZE_MB} МБ")
+    if content_length is not None and content_length > max_content_length_mb * 1024 * 1024:
+        raise HTTPException(413, f"Переданные файлы слишком большие. Лимит: {max_content_length_mb} МБ")
     
-    extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
-    filename = f"upload_{uuid.uuid4().hex[:8]}{extension}"
-
     # Потоковое сохранение с жёстким лимитом размера
+
+    u_name = uuid.uuid4().hex[:8]
+
+    source_extension = source.content_type.split('/')[1]
+    source_name = f"source_{u_name}.{source_extension}"
     try:
-        saved_file_path = await save_upload_stream(file, filename, max_mb=MAX_FILE_SIZE_MB)
+        saved_source_path = await save_upload_stream(source, source_name, user_uid, max_mb=max_source_size_mb)
     except ValueError as e:
-        logger.warning("Upload size exceeded for user_uid=%s filename=%s: %s", user_uid, file.filename, e)
+        logger.warning("Upload size exceeded for user_uid=%s filename=%s: %s", user_uid, source.filename, e)
         raise HTTPException(413, str(e))
     
-    fusion_service = FusionService()
+    template_extension = template.content_type.split('/')[1]
+    template_name = f"template_{u_name}.{template_extension}"
+    try:
+        saved_template_path = await save_upload_stream(template, template_name, user_uid, max_mb=max_template_size_mb)
+    except ValueError as e:
+        logger.warning("Upload size exceeded for user_uid=%s filename=%s: %s", user_uid, template.filename, e)
+        raise HTTPException(413, str(e))
+    
+    fusion_service = FacefusionService()
 
     # Обрабатываем файл
     try:
+        output_name = f"result_{u_name}.{template_extension}"
         result = fusion_service.swap_faces(
-            source_image_path=str(saved_file_path),
-            template_name=template_name,
+            source_image_path=str(saved_source_path),
+            template_image_path=str(saved_template_path),
+            output_name=output_name,
             user_uid=user_uid,
         )
     except FileNotFoundError as e:

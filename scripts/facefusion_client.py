@@ -43,9 +43,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Клиент для вызова /swap: загрузка изображения и получение результата",
     )
-    parser.add_argument("--url", default="http://127.0.0.1:8000/swap", help="URL эндпоинта /swap")
-    parser.add_argument("--file", required=True, help="Путь к исходному изображению на ПК")
-    parser.add_argument("--template-name", required=True, help="Имя шаблона из папки assets (с расширением)")
+    parser.add_argument("--host", default="http://127.0.0.1:8000", help="Host сервиса")
+    parser.add_argument("--source-file", required=True, help="Путь к исходному изображению на ПК")
+    parser.add_argument("--template-file", required=True, help="Путь к файлу шаблона")
     parser.add_argument("--user-uid", required=True, help="Идентификатор пользователя для папки результата")
     parser.add_argument(
         "--out",
@@ -56,34 +56,45 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    source_path = Path(args.file)
+    source_path = Path(args.source_file).resolve()
     if not source_path.exists():
         print(f"Файл не найден: {source_path}", file=sys.stderr)
         return 1
 
-    mime_type, _ = mimetypes.guess_type(source_path.name)
-    if mime_type is None:
-        # допустим как octet-stream, сервер проверит content_type по форм-части
-        mime_type = "application/octet-stream"
+    source_mime, _ = mimetypes.guess_type(source_path.name)
+    if source_mime is None:
+        source_mime = "application/octet-stream"
 
+    template_path = Path(args.template_file)
+    if not template_path.exists():
+        print(f"Файл шаблона не найден: {template_path}", file=sys.stderr)
+        return 1
+
+    template_mime, _ = mimetypes.guess_type(template_path.name)
+    if template_mime is None:
+        template_mime = "application/octet-stream"
+
+    # формируем multipart с двумя файлами: template и source
     files = {
-        "file": (source_path.name, open(source_path, "rb"), mime_type),
+        "template": (template_path.name, open(template_path, "rb"), template_mime),
+        "source": (source_path.name, open(source_path, "rb"), source_mime),
     }
+
     data = {
-        "template_name": args.template_name,
         "user_uid": args.user_uid,
     }
 
     headers = {"Accept": "image/*"}
 
     try:
-        resp = requests.post(args.url, files=files, data=data, headers=headers, timeout=args.timeout)
+        resp = requests.post(args.host+"/facefusion", files=files, data=data, headers=headers, timeout=args.timeout)
     finally:
-        # закрыть файловый дескриптор
-        try:
-            files["file"][1].close()
-        except Exception:
-            pass
+        # закрыть файловые дескрипторы
+        for key in ("template", "source"):
+            try:
+                files[key][1].close()
+            except Exception:
+                pass
 
     if resp.status_code >= 400:
         # показать текст ошибки сервера

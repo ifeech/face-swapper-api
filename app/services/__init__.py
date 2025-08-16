@@ -2,6 +2,6 @@
 Services package for Face Swapper
 """
 
-from .fusion import FusionService
+from .facefusion import FacefusionService
 
-__all__ = ['FusionService']
+__all__ = ['FacefusionService']

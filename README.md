@@ -27,7 +27,6 @@ pip install -e .
 - Вариант A: добавьте `facefusion` в PATH (если у вас есть системный исполняемый CLI). Тогда сервис просто вызовет `facefusion headless-run ...`.
 - Вариант B (рекомендуется для conda): заполните `.env` в корне проекта — сервис сам прочитает переменные
 
-  Пример файла `.env`:
   ```env
   # Путь к скаченному репозиторию FaceFusion, где лежит facefusion.py
   FACEFUSION_HOME=
@@ -55,8 +54,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 По умолчанию результаты замены лица сохраняются в папку `data/output/`.
 
-- `data/assets/` - папка с изображениями-шаблонами
-- `data/input/` - папка с переданными фотографиями 
+`data/input/` - папка с переданными изображениями
 
 ## Способы запуска клиента (получение результата как файла)
 
@@ -64,16 +62,16 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 - Требуется пакет `requests`.
 - Запуск через uv:
 ```bash
-uv run python scripts/swap_client.py --url http://127.0.0.1:8000/swap --file ./tests/data/source.jpg --template-name template.jpg --user-uid 123e4567 --out result.jpg
+uv run python scripts/facefusion_client.py --host http://127.0.0.1:8000 --source-file source.jpg --template-file template.jpg --user-uid 123 --out result.jpg
 ```
 
 **Либо установите requests вручную и запустите обычным Python:**
 ```bash
 pip install requests
-python scripts/swap_client.py --url http://127.0.0.1:8000/swap \
-  --file ./tests/data/source.jpg \
-  --template-name template.jpg \
-  --user-uid 123e4567
+python scripts/facefusion_client.py --host http://127.0.0.1:8000 \
+  --source-file source.jpg \
+  --template-file template.jpg \
+  --user-uid 123
 ```
 
 **curl** 
@@ -82,42 +80,41 @@ python scripts/swap_client.py --url http://127.0.0.1:8000/swap \
 
 ## Эндпоинт API
 
-- Метод: `POST /swap`
+- Метод: `POST /facefusion`
 - Тип: `multipart/form-data`
 - Поля формы:
-  - `file`: изображение с лицом (`image/jpeg` или `image/png`)
-  - `template_name`: имя файла шаблона из папки `data/assets/` (например, `celebrity.jpg`)
-  - `user_uid`: идентификатор пользователя; результат сохраняется в `output/<user_uid>/...`
+  - `source`: файл с исходным изображением, где нужно заменить лицо (`image/jpeg` или `image/png`)
+  - `template`: файл шаблона — изображение или видео (`image/jpeg`, `image/png`, или `video/mp4`). Видео-шаблоны поддерживаются.
+  - `user_uid`: идентификатор пользователя; результат сохраняется в `data/output/<user_uid>/...`
 
-Ответ: файл-изображение (контент `image/jpeg` или `image/png`), готовый к отправке во внешний сервис (например, Telegram).
+Ответ: файл (изображение или видео) с соответствующим Content-Type (`image/jpeg`, `image/png` или `video/mp4`) — готовый к отправке во внешний сервис.
 
 ### Примеры вызова
 
-curl:
+curl (пример с изображением в качестве шаблона):
+
 ```bash
-curl -X POST "http://127.0.0.1:8000/swap" \
-  -H "Accept: image/jpeg" \
-  -F "file=@/path/to/source.jpg;type=image/jpeg" \
-  -F "template_name=template.jpg" \
+curl -X POST "http://127.0.0.1:8000/facefusion" \
+  -H "Accept: image/*" \
+  -F "source=@/path/to/source.jpg;type=image/jpeg" \
+  -F "template=@/path/to/template.jpg;type=image/jpeg" \
   -F "user_uid=123e4567" \
   --output result.jpg
 ```
 
-Python (requests):
-```python
-import requests
+curl (пример с видео-шаблоном):
 
-url = "http://127.0.0.1:8000/swap"
-with open("/path/to/source.jpg", "rb") as f:
-    files = {"file": ("source.jpg", f, "image/jpeg")}
-    data = {"template_name": "template.jpg", "user_uid": "123e4567"}
-    r = requests.post(url, files=files, data=data)
-    r.raise_for_status()
-    with open("result.jpg", "wb") as out:
-        out.write(r.content)
+```bash
+curl -X POST "http://127.0.0.1:8000/facefusion" \
+  -H "Accept: video/mp4" \
+  -F "source=@/path/to/source.jpg;type=image/jpeg" \
+  -F "template=@/path/to/template.mp4;type=video/mp4" \
+  -F "user_uid=123e4567" \
+  --output result.mp4
 ```
 
 ## Замечания
+
 - Первый запуск может скачивать модели FaceFusion (папка `data/models/`).
 - Если `facefusion` не найден, сервер вернёт 500 с подсказкой установить CLI.
 - Ограничение размера загрузки по умолчанию ~10 МБ.
