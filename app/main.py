@@ -1,8 +1,18 @@
 import os
 import uuid
+import shutil
 import logging
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    Form,
+    HTTPException,
+    Header,
+    Request,
+    Response,
+)
 from fastapi.responses import FileResponse
 from pathlib import Path
 from dotenv import load_dotenv
@@ -22,6 +32,43 @@ load_dotenv()
 
 
 app = FastAPI()
+
+
+# IP whitelist middleware: reads ALLOWED_IPS from environment (comma-separated)
+@app.middleware("http")
+async def ip_whitelist_middleware(request: Request, call_next):
+    allowed_ips_raw = os.getenv("ALLOWED_IPS", "")
+    if not allowed_ips_raw:
+        return await call_next(request)
+
+    allowed_ips = {ip.strip() for ip in allowed_ips_raw.split(",") if ip.strip()}
+
+    # try X-Forwarded-For first (proxy), otherwise use client host
+    xff = request.headers.get("x-forwarded-for")
+
+    client_ip = None
+    if xff:
+        # take first IP in the XFF list
+        client_ip = xff.split(",")[0].strip()
+    else:
+        if request.client:
+            client_ip = request.client.host
+
+    allowed = client_ip is not None and client_ip in allowed_ips
+
+    if not allowed:
+        logger.warning(
+            "Blocked request from IP=%s path=%s", client_ip, request.url.path
+        )
+        return Response(content="Forbidden", status_code=403)
+
+    # allowed -> continue processing
+    return await call_next(request)
+
+
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():
+    return {"status": "ok"}
 
 
 @app.post("/facefusion")
@@ -53,31 +100,50 @@ async def swap(
     max_source_size_mb = int(os.getenv("MAX_SOURCE_FILE_SIZE_MB"))
     max_template_size_mb = int(os.getenv("MAX_TEMPLATE_SIZE_MB"))
 
-    max_content_length_mb = max_source_size_mb+max_template_size_mb
+    max_content_length_mb = max_source_size_mb + max_template_size_mb
     # Проверка размера до чтения (если сервер/клиент передал Content-Length)
-    if content_length is not None and content_length > max_content_length_mb * 1024 * 1024:
-        raise HTTPException(413, f"Переданные файлы слишком большие. Лимит: {max_content_length_mb} МБ")
-    
+    if (
+        content_length is not None
+        and content_length > max_content_length_mb * 1024 * 1024
+    ):
+        raise HTTPException(
+            413, f"Переданные файлы слишком большие. Лимит: {max_content_length_mb} МБ"
+        )
+
     # Потоковое сохранение с жёстким лимитом размера
 
     u_name = uuid.uuid4().hex[:8]
 
-    source_extension = source.content_type.split('/')[1]
+    source_extension = source.content_type.split("/")[1]
     source_name = f"source_{u_name}.{source_extension}"
     try:
-        saved_source_path = await save_upload_stream(source, source_name, user_uid, max_mb=max_source_size_mb)
+        saved_source_path = await save_upload_stream(
+            source, source_name, user_uid, max_mb=max_source_size_mb
+        )
     except ValueError as e:
-        logger.warning("Upload size exceeded for user_uid=%s filename=%s: %s", user_uid, source.filename, e)
+        logger.warning(
+            "Upload size exceeded for user_uid=%s filename=%s: %s",
+            user_uid,
+            source.filename,
+            e,
+        )
         raise HTTPException(413, str(e))
-    
-    template_extension = template.content_type.split('/')[1]
+
+    template_extension = template.content_type.split("/")[1]
     template_name = f"template_{u_name}.{template_extension}"
     try:
-        saved_template_path = await save_upload_stream(template, template_name, user_uid, max_mb=max_template_size_mb)
+        saved_template_path = await save_upload_stream(
+            template, template_name, user_uid, max_mb=max_template_size_mb
+        )
     except ValueError as e:
-        logger.warning("Upload size exceeded for user_uid=%s filename=%s: %s", user_uid, template.filename, e)
+        logger.warning(
+            "Upload size exceeded for user_uid=%s filename=%s: %s",
+            user_uid,
+            template.filename,
+            e,
+        )
         raise HTTPException(413, str(e))
-    
+
     fusion_service = FacefusionService()
 
     # Обрабатываем файл
@@ -107,4 +173,6 @@ async def swap(
     else:
         media_type = "application/octet-stream"
 
-    return FileResponse(path=output_path, media_type=media_type, filename=Path(output_path).name)
+    return FileResponse(
+        path=output_path, media_type=media_type, filename=Path(output_path).name
+    )
